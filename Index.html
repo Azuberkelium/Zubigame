@@ -10,6 +10,8 @@
     <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <!-- Font Awesome for icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
 </head>
 <body class="bg-gray-900 text-white font-sans">
 
@@ -20,8 +22,15 @@
         const { useState, useEffect } = React;
         const rootElement = ReactDOM.createRoot(document.getElementById('root'));
 
-        // Main App component
-        function App() {
+        const SPECIAL_BLOCKS_COST = {
+            swap: 50000,
+            hammer: 100000,
+            doubler: 150000,
+            freeze: 200000,
+            bomb: 250000,
+        };
+
+        const App = () => {
             // Generates the initial numbers (2, 4, 8, ...) up to 32768
             const numbers = (() => {
                 const nums = [];
@@ -42,6 +51,16 @@
             const [gameOver, setGameOver] = useState(false);
             const [highestValue, setHighestValue] = useState(null);
             const [selectedDropZoneValue, setSelectedDropZoneValue] = useState(null);
+            const [specialBlocks, setSpecialBlocks] = useState({
+                swap: 0,
+                hammer: 0,
+                doubler: 0,
+                freeze: 0,
+                bomb: 0,
+            });
+            const [activeSpecialBlock, setActiveSpecialBlock] = useState(null);
+            const [swapSelection, setSwapSelection] = useState([]);
+            const [message, setMessage] = useState('');
 
             // Recalculate the score whenever the grid changes
             useEffect(() => {
@@ -68,7 +87,6 @@
             // Handle clicking a number from the top section
             const handleNumberClick = (value) => {
                 if (dropZone.length < 3) {
-                    // Find the number in the main pool and add a copy to the drop zone
                     const numberToAdd = numbers.find(n => n.value === value);
                     if (numberToAdd) {
                         setDropZone([...dropZone, { ...numberToAdd }]);
@@ -81,7 +99,6 @@
                 if (dropZone.length > 0) {
                     const newDropZone = dropZone.slice(0, -1);
                     setDropZone(newDropZone);
-                    // Deselect the drop zone number if it was the one being removed
                     if (selectedDropZoneValue === dropZone[dropZone.length - 1]?.value) {
                         setSelectedDropZoneValue(null);
                     }
@@ -91,6 +108,8 @@
             // Handle clicking a number in the drop zone
             const handleDropZoneClick = (value) => {
                 setSelectedDropZoneValue(value);
+                setActiveSpecialBlock(null);
+                setMessage('');
             };
 
             // Recursive function to merge adjacent blocks
@@ -99,19 +118,17 @@
                 let newGrid = JSON.parse(JSON.stringify(currentGrid));
 
                 const checkAndMerge = (r, c) => {
-                    if (newGrid[r][c]) {
+                    if (newGrid[r][c] && !newGrid[r][c].isFrozen) {
                         const value = newGrid[r][c].value;
                         const neighbors = [
                             [r - 1, c], [r + 1, c], [r, c - 1], [r, c + 1]
                         ];
 
                         for (const [nr, nc] of neighbors) {
-                            if (nr >= 0 && nr < 5 && nc >= 0 && nc < 5 && newGrid[nr][nc] && newGrid[nr][nc].value === value) {
-                                // Merge the two blocks
+                            if (nr >= 0 && nr < 5 && nc >= 0 && nc < 5 && newGrid[nr][nc] && newGrid[nr][nc].value === value && !newGrid[nr][nc].isFrozen) {
                                 newGrid[r][c] = { value: value * 2, color: newGrid[r][c].color };
                                 newGrid[nr][nc] = null;
                                 merged = true;
-                                // Recursively check for new merges from the position of the new block
                                 newGrid = gravity(newGrid);
                                 newGrid = mergeBlocks(newGrid);
                                 return;
@@ -156,7 +173,6 @@
 
                 let newGrid = [...grid];
                 let row = -1;
-                // Find the lowest available spot in the column
                 for (let r = 4; r >= 0; r--) {
                     if (!newGrid[r][col]) {
                         row = r;
@@ -165,27 +181,154 @@
                 }
 
                 if (row !== -1) {
-                    // Find the index of the selected number in the drop zone
                     const selectedIndex = dropZone.findIndex(n => n.value === selectedDropZoneValue);
                     if (selectedIndex === -1) return;
 
-                    // Place the selected number
                     const selectedNumber = dropZone[selectedIndex];
                     newGrid[row][col] = selectedNumber;
 
-                    // Remove from drop zone
                     const newDropZone = dropZone.filter((_, index) => index !== selectedIndex);
                     setDropZone(newDropZone);
                     setSelectedDropZoneValue(null);
 
-                    // Apply gravity and then check for merges
                     let finalGrid = gravity(newGrid);
                     finalGrid = mergeBlocks(finalGrid);
                     finalGrid = gravity(finalGrid);
-                    finalGrid = mergeBlocks(finalGrid); // Re-check after gravity
+                    finalGrid = mergeBlocks(finalGrid);
 
                     setGrid(finalGrid);
                 }
+            };
+            
+            // --- Special Blocks Logic ---
+            const handleBuySpecialBlock = (type) => {
+                const cost = SPECIAL_BLOCKS_COST[type];
+                if (score >= cost) {
+                    setScore(score - cost);
+                    setSpecialBlocks(prev => ({ ...prev, [type]: prev[type] + 1 }));
+                    setMessage(`Purchased a ${type} block!`);
+                } else {
+                    setMessage('Not enough score to buy this block.');
+                }
+            };
+
+            const handleActivateSpecialBlock = (type) => {
+                if (specialBlocks[type] > 0) {
+                    setActiveSpecialBlock(type);
+                    setSelectedDropZoneValue(null);
+                    setMessage(`Activated ${type} block. Click on the grid to use it.`);
+                } else {
+                    setMessage('You do not own this block yet.');
+                }
+            };
+
+            const handleGridClick = (r, c) => {
+                // If a special block is active, use its ability
+                if (activeSpecialBlock) {
+                    let newGrid = [...grid];
+                    let blockUsed = false;
+                    let message = '';
+
+                    switch (activeSpecialBlock) {
+                        case 'swap':
+                            if (!newGrid[r][c]) {
+                                setMessage('You can only swap two existing blocks.');
+                                return;
+                            }
+                            if (swapSelection.length === 0) {
+                                setSwapSelection([r, c]);
+                                setMessage('Select a second block to swap.');
+                            } else {
+                                const [r1, c1] = swapSelection;
+                                if (!newGrid[r1][c1]) {
+                                     setMessage('You can only swap two existing blocks.');
+                                     return;
+                                }
+                                // Swap the blocks
+                                const temp = newGrid[r][c];
+                                newGrid[r][c] = newGrid[r1][c1];
+                                newGrid[r1][c1] = temp;
+                                
+                                setSwapSelection([]);
+                                blockUsed = true;
+                                message = 'Blocks swapped!';
+                            }
+                            break;
+                        case 'hammer':
+                            if (newGrid[r][c]) {
+                                newGrid[r][c] = null;
+                                newGrid = gravity(newGrid);
+                                blockUsed = true;
+                                message = 'Block hammered!';
+                            }
+                            break;
+                        case 'doubler':
+                            if (newGrid[r][c]) {
+                                newGrid[r][c].value *= 2;
+                                blockUsed = true;
+                                message = 'Block doubled!';
+                            }
+                            break;
+                        case 'freeze':
+                            if (newGrid[r][c]) {
+                                newGrid[r][c].isFrozen = !newGrid[r][c]?.isFrozen;
+                                blockUsed = true;
+                                message = `Block is now ${newGrid[r][c].isFrozen ? 'frozen' : 'unfrozen'}!`;
+                            }
+                            break;
+                        case 'bomb':
+                            for(let row = 0; row < 5; row++) {
+                                newGrid[row][c] = null;
+                            }
+                            newGrid = gravity(newGrid);
+                            blockUsed = true;
+                            message = 'Column bombed!';
+                            break;
+                    }
+
+                    if (blockUsed) {
+                        if (activeSpecialBlock !== 'freeze' || !newGrid[r][c]?.isFrozen) {
+                            newGrid = mergeBlocks(newGrid);
+                            newGrid = gravity(newGrid);
+                        }
+                        
+                        setGrid(newGrid);
+                        // Decrement block count and deactivate
+                        if (activeSpecialBlock !== 'freeze' && activeSpecialBlock !== 'swap') {
+                           setSpecialBlocks(prev => ({ ...prev, [activeSpecialBlock]: prev[activeSpecialBlock] - 1 }));
+                        }
+                        if (activeSpecialBlock !== 'swap' || swapSelection.length === 0) {
+                            setActiveSpecialBlock(null);
+                        }
+                        setMessage(message);
+                    }
+                } 
+                // Otherwise, perform a normal number drop
+                else if (dropZone.length > 0 && selectedDropZoneValue) {
+                    handleGridDrop(c);
+                } else {
+                    setMessage('Please select a number from the drop zone first, or activate a special block.');
+                }
+            };
+            
+            // --- Reset Game ---
+            const handleReset = () => {
+                setDropZone([]);
+                setGrid(Array(5).fill(null).map(() => Array(5).fill(null)));
+                setScore(0);
+                setGameOver(false);
+                setHighestValue(null);
+                setSelectedDropZoneValue(null);
+                setSpecialBlocks({
+                    swap: 0,
+                    hammer: 0,
+                    doubler: 0,
+                    freeze: 0,
+                    bomb: 0,
+                });
+                setActiveSpecialBlock(null);
+                setSwapSelection([]);
+                setMessage('');
             };
 
             return (
@@ -194,6 +337,13 @@
                         <h1 className="text-6xl font-extrabold text-center my-8 text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 to-purple-600">
                             DartMerge
                         </h1>
+
+                        {/* Message box */}
+                        {message && (
+                            <div className="bg-blue-600 text-white p-3 rounded-lg text-center font-bold mb-4">
+                                {message}
+                            </div>
+                        )}
 
                         {/* Top numbers section */}
                         <div className="bg-gray-800 p-4 rounded-xl shadow-lg mb-8">
@@ -244,6 +394,36 @@
                             </div>
                         </div>
 
+                        {/* Special Blocks Section */}
+                        <div className="bg-gray-800 p-4 rounded-xl shadow-lg mb-8 flex flex-col items-center">
+                            <h2 className="text-2xl font-bold mb-4 text-center">Special Blocks</h2>
+                            <div className="flex flex-wrap gap-2 justify-center w-full">
+                                {Object.keys(SPECIAL_BLOCKS_COST).map(type => (
+                                    <div key={type} className="flex flex-col items-center p-2 rounded-lg bg-gray-700 shadow-md">
+                                        <div className="text-sm text-gray-400 capitalize">{type}</div>
+                                        <button
+                                            className={`
+                                                w-20 h-20 text-3xl rounded-lg shadow-md transition-all duration-200 ease-in-out
+                                                ${activeSpecialBlock === type ? 'shadow-yellow-400 shadow-[0_0_15px] animate-pulse' : ''}
+                                                ${score >= SPECIAL_BLOCKS_COST[type] ? 'bg-purple-600 hover:bg-purple-700 active:scale-95' : 'bg-gray-600 cursor-not-allowed'}
+                                                ${specialBlocks[type] > 0 ? 'bg-green-600 hover:bg-green-700 active:scale-95' : ''}
+                                            `}
+                                            onClick={() => specialBlocks[type] > 0 ? handleActivateSpecialBlock(type) : handleBuySpecialBlock(type)}
+                                            disabled={gameOver && activeSpecialBlock !== 'swap'}
+                                        >
+                                            <i className={`fas fa-${type === 'swap' ? 'exchange-alt' : type}`}></i>
+                                        </button>
+                                        <div className="text-xs text-gray-300 mt-1">
+                                            Own: {specialBlocks[type]}
+                                        </div>
+                                        <div className="text-xs text-gray-500">
+                                            Cost: {SPECIAL_BLOCKS_COST[type]}
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+
                         {/* Game Grid and Score */}
                         <div className="bg-gray-800 p-6 rounded-xl shadow-lg mb-8 flex flex-col items-center">
                             <h2 className="text-2xl font-bold mb-4 text-center">Game Grid</h2>
@@ -255,8 +435,10 @@
                                             className={`w-20 h-20 rounded-lg flex items-center justify-center text-2xl font-bold transition-all duration-300
                                             ${cell ? `${cell.color} text-white` : 'bg-gray-600 cursor-pointer'}
                                             ${cell?.value === highestValue && 'shadow-yellow-400 shadow-[0_0_15px]'}
+                                            ${(activeSpecialBlock && !cell) && 'cursor-not-allowed'}
+                                            ${cell?.isFrozen && 'border-4 border-blue-400'}
                                             `}
-                                            onClick={() => dropZone.length > 0 && selectedDropZoneValue && handleGridDrop(colIndex)}
+                                            onClick={() => handleGridClick(rowIndex, colIndex)}
                                         >
                                             {cell?.value || ''}
                                         </div>
@@ -266,6 +448,12 @@
                             <div className="mt-6 text-3xl font-bold text-center">
                                 Score: <span className="text-green-400">{score}</span>
                             </div>
+                            <button
+                                onClick={handleReset}
+                                className="mt-4 py-2 px-4 rounded-lg bg-red-500 text-white font-bold hover:bg-red-600 transition-all active:scale-95"
+                            >
+                                Reset Game
+                            </button>
                             {gameOver && (
                                 <div className="mt-4 text-4xl font-extrabold text-red-500 animate-pulse">
                                     GAME OVER!
@@ -275,8 +463,8 @@
                     </div>
                 </div>
             );
-        }
-
+        };
+        
         rootElement.render(<App />);
 
     </script>
